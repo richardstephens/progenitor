@@ -1,5 +1,5 @@
 [package]
-name = "argocd-lib"
+name = "argocd-api-client"
 version = "0.1.0"
 edition = "2021"
 license = "SPECIFY A LICENSE BEFORE PUBLISHING"
