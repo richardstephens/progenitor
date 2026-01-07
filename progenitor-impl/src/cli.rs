@@ -14,6 +14,7 @@ use crate::{
     util::{sanitize, Case},
     validate_openapi, Generator, Result,
 };
+use crate::method::ResponseFilter;
 
 struct CliOperation {
     cli_fn: TokenStream,
@@ -209,9 +210,9 @@ impl Generator {
         let op_name = format_ident!("{}", &method.operation_id);
 
         let (_, success_kind) =
-            self.extract_responses(method, OperationResponseStatus::is_success_or_default);
+            self.extract_responses(method, ResponseFilter::Success);
         let (_, error_kind) =
-            self.extract_responses(method, OperationResponseStatus::is_error_or_default);
+            self.extract_responses(method, ResponseFilter::Error);
 
         let execute_and_output = match method.dropshot_paginated {
             // Normal, one-shot API calls.

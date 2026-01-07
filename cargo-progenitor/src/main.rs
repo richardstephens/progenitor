@@ -182,7 +182,7 @@ fn main() -> Result<()> {
             } else {
                 api_code.to_string()
             };
-            let lib_code = reformat_code(lib_code);
+            //let lib_code = reformat_code(lib_code);
 
             let mut librs = src.clone();
             librs.push("lib.rs");

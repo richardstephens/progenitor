@@ -19,6 +19,7 @@ use crate::{
 use crate::{to_schema::ToSchema, util::ReferenceOrExt};
 
 /// The intermediate representation of an operation that will become a method.
+#[derive(Debug)]
 pub(crate) struct OperationMethod {
     pub operation_id: String,
     pub tags: Vec<String>,
@@ -32,6 +33,7 @@ pub(crate) struct OperationMethod {
     dropshot_websocket: bool,
 }
 
+#[derive(Debug)]
 pub enum HttpMethod {
     Get,
     Put,
@@ -87,11 +89,12 @@ struct BuilderImpl {
     body: TokenStream,
 }
 
+#[derive(Debug)]
 pub struct DropshotPagination {
     pub item: TypeId,
     pub first_page_params: Vec<String>,
 }
-
+#[derive(Debug)]
 pub struct OperationParameter {
     /// Sanitized parameter name.
     pub name: String,
@@ -102,7 +105,7 @@ pub struct OperationParameter {
     pub kind: OperationParameterKind,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq,Debug)]
 pub enum OperationParameterType {
     Type(TypeId),
     RawBody,
@@ -218,6 +221,13 @@ impl OperationResponseStatus {
         }
     }
 
+    pub fn is_success(&self) -> bool {
+        matches!(self,
+        | OperationResponseStatus::Code(101)
+        | OperationResponseStatus::Code(200..=299)
+            | OperationResponseStatus::Range(2))
+    }
+
     pub fn is_success_or_default(&self) -> bool {
         matches!(
             self,
@@ -280,6 +290,12 @@ impl OperationResponseKind {
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub enum ResponseFilter {
+    Success,
+    Error,
 }
 
 impl Generator {
@@ -928,7 +944,7 @@ impl Generator {
         assert!(body_func.clone().count() <= 1);
 
         let (success_response_items, response_type) =
-            self.extract_responses(method, OperationResponseStatus::is_success_or_default);
+            self.extract_responses(method, ResponseFilter::Success);
 
         let success_response_matches = success_response_items.iter().map(|response| {
             let pat = match &response.status_code {
@@ -966,7 +982,7 @@ impl Generator {
 
         // Errors...
         let (error_response_items, error_type) =
-            self.extract_responses(method, OperationResponseStatus::is_error_or_default);
+            self.extract_responses(method, ResponseFilter::Error);
 
         let error_response_matches = error_response_items.iter().map(|response| {
             let pat = match &response.status_code {
@@ -1044,12 +1060,12 @@ impl Generator {
         // the default as a success response as well.) Otherwise the catch-all
         // produces an error corresponding to a response not specified in the
         // API description.
-        let default_response = match method.responses.iter().last() {
-            Some(response) if response.status_code.is_default() => quote! {},
-            _ => {
-                quote! { _ => Err(Error::UnexpectedResponse(#response_ident)), }
-            }
+        let default_response = if method.responses.iter().any(|r| r.status_code.is_default()) {
+            quote! {}} else
+        {
+            quote! { _ => Err(Error::UnexpectedResponse(#response_ident)), }
         };
+
 
         let inner = match has_inner {
             true => quote! { &#client_value.inner, },
@@ -1172,14 +1188,39 @@ impl Generator {
     pub(crate) fn extract_responses<'a>(
         &self,
         method: &'a OperationMethod,
-        filter: fn(&OperationResponseStatus) -> bool,
+        filter: ResponseFilter,
     ) -> (Vec<&'a OperationResponse>, OperationResponseKind) {
+        println!("method: {:#?}", method);
+        let filter_fn:  fn(&OperationResponseStatus) -> bool;
+        if method.responses.len() == 2 && method.responses.iter().filter(|r| r.status_code.is_success()).count() == 1
+        && method.responses.iter().filter(|r| r.status_code.is_default()).count() == 1 {
+            match filter {
+                ResponseFilter::Success => {
+                    filter_fn = OperationResponseStatus::is_success
+                }
+                ResponseFilter::Error => {
+                    filter_fn = OperationResponseStatus::is_default
+                }
+            }
+        } else {
+            match filter {
+                ResponseFilter::Success => {
+                    filter_fn = OperationResponseStatus::is_success_or_default
+                }
+                ResponseFilter::Error => {
+                    filter_fn = OperationResponseStatus::is_error_or_default
+                }
+            }
+        };
+
         let mut response_items = method
             .responses
             .iter()
-            .filter(|response| filter(&response.status_code))
+            .filter(|response| (filter_fn)(&response.status_code))
             .collect::<Vec<_>>();
         response_items.sort();
+
+        println!("response_items {:#?}", response_items);
 
         // If we have a success range and a default, we can pop off the default
         // since it will never be hit. Note that this is a no-op for error
@@ -1200,11 +1241,14 @@ impl Generator {
                 response_items.pop();
             }
         }
+        println!("response_items_2 {:#?}", response_items);
 
         let response_types = response_items
             .iter()
             .map(|response| response.typ.clone())
             .collect::<BTreeSet<_>>();
+
+        println!("response_types {:#?}", response_types);
 
         // TODO to deal with multiple response types, we'll need to create an
         // enum type with variants for each of the response types.
